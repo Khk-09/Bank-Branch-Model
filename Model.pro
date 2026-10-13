@@ -7,11 +7,13 @@ CONFIG += c++17
 QMAKE_CXXFLAGS += -finput-charset=UTF-8 -fexec-charset=UTF-8
 
 SOURCES += \
+    bank.cpp \
     generators.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
+    bank.h \
     generators.h \
     mainwindow.h
 
