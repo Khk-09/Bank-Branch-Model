@@ -64,9 +64,13 @@ class Bank {
 public:
     Bank(const BankParams &params);
 
+    void advance_to(long long target);
+    void advance_step(long long step);
+
     long long now() const { return cur; }
     long long end_time() const { return (long long) SimDays * DayMs; }
     bool finished() const { return cur >= end_time(); }
+    BankSnapshot snapshot() const;
     static std::string clock_text(long long t);
 
 private:
@@ -165,7 +169,13 @@ private:
     int find_free() const;
     void start_service(int clerk, int number, long long arrived);
     void try_assign(int clerk);
+    void begin_lunch(int clerk);
 
+    void on_open();
+    void on_close();
     void on_arrival();
     void on_service_end(int clerk);
+    void on_lunch_start(int clerk);
+    void on_lunch_end(int clerk);
+    void on_hour();
 };

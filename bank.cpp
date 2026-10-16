@@ -186,6 +186,16 @@ void Bank::start_service(int clerk, int number, long long arrived) {
     schedule(c.until, ServiceEnd, clerk);
 }
 
+void Bank::begin_lunch(int clerk) {
+    Clerk &c = clerks[clerk];
+    c.phase = ClerkView::Lunch;
+    c.lunch_done = true;
+    c.client = 0;
+    c.until = cur + LunchMs;
+    schedule(c.until, LunchEnd, clerk);
+    log("Окно " + std::to_string(clerk + 1) + " ушло на обед");
+}
+
 void Bank::try_assign(int clerk) {
     Clerk &c = clerks[clerk];
     if (!accepting) {
@@ -195,7 +205,7 @@ void Bank::try_assign(int clerk) {
         return;
     }
     if (!c.lunch_done && cur >= c.lunch_nominal) {
-        // begin lunch
+        begin_lunch(clerk);
         return;
     }
     if (!queue.empty()) {
@@ -211,6 +221,57 @@ void Bank::try_assign(int clerk) {
     c.phase = ClerkView::Free;
     c.client = 0;
     c.until = 0;
+}
+
+void Bank::on_open() {
+    accrue(cur);
+    accepting = true;
+    day_index = int(cur / DayMs);
+    next_number = 0;
+    board_client = 0;
+    board_window = 0;
+    queue.clear();
+    L = 0;
+    note_queue();
+
+    long long day0 = (long long)day_index * DayMs;
+    long long open_off = is_saturday(day_index) ? OpenSaturday : OpenWeekday;
+    long long close_off = is_saturday(day_index) ? CloseSaturday : CloseWeekday;
+    int H = is_saturday(day_index) ? 6 : 8;
+    schedule(day0 + close_off, Close, -1);
+    for (int i = 1; i < H; i++) schedule(day0 + open_off + i * HourMs, Hour, -1);
+
+    long long len = close_off - open_off;
+    long long band = (long long)clerks.size() * LunchMs;
+    long long t0 = open_off + (len - band) / 2;
+    for (int i = 0; i < clerks.size(); i++) {
+        clerks[i] = Clerk();
+        clerks[i].lunch_nominal = day0 + t0 + i * LunchMs;
+        schedule(clerks[i].lunch_nominal, LunchStart, i);
+    }
+    log(is_saturday(day_index) ? "Филиал открыт (короткий день)" : "Филиал открыт");
+    arm_new_interval();
+}
+
+void Bank::on_close() {
+    accrue(cur);
+    accepting = false;
+    cancel_arrival();
+    int sent = 0;
+    while (!queue.empty()) {
+        Waiting w = queue.front();
+        queue.pop_front();
+        lost++;
+        lost_close++;
+        sum_wait += cur - w.arrival;
+        wait_n++;
+        sent++;
+    }
+    L = 0;
+    salary += (long long)clerks.size() * SalaryRub;
+    if (sent > 0) log("Закрытие: распущено " + std::to_string(sent));
+    else log("Филиал закрыт");
+    schedule_next_open(day_index + 1);
 }
 
 void Bank::on_arrival() {
@@ -250,4 +311,99 @@ void Bank::on_service_end(int clerk) {
     c.phase = ClerkView::Free;
     c.client = 0;
     try_assign(clerk);
+}
+
+void Bank::on_lunch_start(int clerk) {
+    accrue(cur);
+    if (clerk < 0 || clerk >= clerks.size()) return;
+    if (clerks[clerk].lunch_done) return;
+    if (clerks[clerk].phase == ClerkView::Free) begin_lunch(clerk);
+}
+
+void Bank::on_lunch_end(int clerk) {
+    accrue(cur);
+    if (clerk < 0 || clerk >= clerks.size()) return;
+    clerks[clerk].phase = ClerkView::Free;
+    clerks[clerk].client = 0;
+    log("Окно " + std::to_string(clerk + 1) + " вернулось с обеда");
+    try_assign(clerk);
+}
+
+void Bank::on_hour() {
+    accrue(cur);
+    retarget();
+}
+
+void Bank::advance_to(long long target) {
+    if (target > end_time()) target = end_time();
+    int guard = 0;
+    while (!events.empty() && events.begin()->time <= target) {
+        if (++guard > 5000000) return;
+        Timed ev = *events.begin();
+        events.erase(events.begin());
+        cur = ev.time;
+        if (ev.kind == Arrival) plan.active = false;
+        switch (ev.kind) {
+        case Open: on_open(); break;
+        case Close: on_close(); break;
+        case Arrival: on_arrival(); break;
+        case ServiceEnd: on_service_end(ev.clerk); break;
+        case LunchStart: on_lunch_start(ev.clerk); break;
+        case LunchEnd: on_lunch_end(ev.clerk); break;
+        case Hour: on_hour(); break;
+        }
+    }
+    if (cur < target) {
+        accrue(target);
+        cur = target;
+    }
+}
+
+void Bank::advance_step(long long step) {
+    if (step < 1) step = 1;
+    if (!accepting && events.empty()) {
+        advance_to(end_time());
+        return;
+    }
+    if (!accepting && !events.empty()) {
+        advance_to(events.begin()->time);
+        return;
+    }
+    advance_to(cur + step);
+}
+
+BankSnapshot Bank::snapshot() const {
+    BankSnapshot s;
+    s.time = cur;
+    s.open = accepting;
+    s.done = finished();
+    s.issued_today = next_number;
+    s.board_client = board_client;
+    s.board_window = board_window;
+    s.queue_limit = params.limit;
+    s.queue_ready = queue_ready;
+    s.queue.reserve(queue.size());
+    for (const Waiting &w : queue) s.queue.push_back(w.number);
+    s.clerks.resize(clerks.size());
+    for (int i = 0; i < clerks.size(); i++) {
+        s.clerks[i].phase = clerks[i].phase;
+        s.clerks[i].client = clerks[i].client;
+        s.clerks[i].until = clerks[i].until;
+    }
+    s.served = served;
+    s.lost = lost;
+    s.lost_full = lost_full;
+    s.lost_close = lost_close;
+    s.queue_min = queue_min;
+    s.queue_max = queue_max;
+    if (open_ms > 0) {
+        s.queue_avg = double(sum_queue) / open_ms;
+        s.occupancy = double(sum_busy) / (clerks.size() * open_ms);
+    }
+    if (wait_n > 0) s.wait_avg_min = double(sum_wait) / wait_n / MinuteMs;
+    s.income = income;
+    s.salary = salary;
+    s.profit = income - salary;
+    s.log.assign(logs.begin(), logs.end());
+    return s;
 }
