@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <memory>
 
+class BankWidget;
 class QPlainTextEdit;
 class QLabel;
 class QSpinBox;
@@ -25,9 +26,11 @@ private slots:
 
 private:
     void buildUi();
+    void refresh();
     void setPlaying(bool on);
     DistRange readRange(QComboBox *law, QDoubleSpinBox *min_v, QDoubleSpinBox *max_v, QDoubleSpinBox *mean, QDoubleSpinBox *sigma, bool *ok) const;
     std::unique_ptr<Bank> bank;
+    BankWidget *view = nullptr;
     QPlainTextEdit *log_view = nullptr;
     QLabel *stats = nullptr;
     QSpinBox *clerks_spin = nullptr;

@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "bankwidget.h"
 #include <QtWidgets>
 #include <chrono>
 #include <cmath>
@@ -120,6 +121,8 @@ void MainWindow::buildUi() {
     side_lay->addStretch();
     scroll->setWidget(side);
 
+    view = new BankWidget;
+
     QWidget *right = new QWidget;
     QVBoxLayout *right_lay = new QVBoxLayout(right);
     stats = new QLabel;
@@ -134,6 +137,7 @@ void MainWindow::buildUi() {
     right->setMinimumWidth(320);
 
     split->addWidget(scroll);
+    split->addWidget(view);
     split->addWidget(right);
     split->setStretchFactor(0, 0);
     split->setStretchFactor(1, 1);
@@ -207,6 +211,7 @@ void MainWindow::startOver() {
     p.seed = seed;
     bank = std::make_unique<Bank>(p);
     bank->advance_step(MinuteMs);
+    refresh();
 }
 
 void MainWindow::stepOnce() {
@@ -215,9 +220,11 @@ void MainWindow::stepOnce() {
     }
     if (bank->finished()) {
         setPlaying(false);
+        refresh();
         return;
     }
     bank->advance_step(step_spin->value() * MinuteMs);
+    refresh();
     if (bank->finished()) {
         setPlaying(false);
     }
@@ -247,4 +254,40 @@ void MainWindow::runToEnd() {
     QApplication::setOverrideCursor(Qt::WaitCursor);
     bank->advance_to(bank->end_time());
     QApplication::restoreOverrideCursor();
+    refresh();
+}
+
+void MainWindow::refresh() {
+    if (!bank) {
+        return;
+    }
+    BankSnapshot s = bank->snapshot();
+    view->setSnapshot(s);
+    auto num = [](double v) { return QString::number(v, 'f', 2); };
+    QString qmin = s.queue_ready ? QString::number(s.queue_min) : "—";
+    QString qmax = s.queue_ready ? QString::number(s.queue_max) : "—";
+    QString qavg = s.queue_ready ? num(s.queue_avg) : "—";
+    QString text;
+    text += "Обслужено: " + QString::number(s.served) + "\n";
+    text += "Потеряно: " + QString::number(s.lost)
+            + "  (отказ " + QString::number(s.lost_full)
+            + ", закрытие " + QString::number(s.lost_close) + ")\n";
+    text += "Очередь  мин / сред / макс:  " + qmin + "  /  " + qavg + "  /  " + qmax + "\n";
+    text += "Среднее ожидание: " + num(s.wait_avg_min) + " мин\n";
+    text += "Средняя занятость клерков: " + num(s.occupancy * 100.0) + " %\n";
+    text += "Выручка: " + QString::number(s.income) + " ₽\n";
+    text += "Зарплата: " + QString::number(s.salary) + " ₽\n";
+    text += "Прибыль: " + QString::number(s.profit) + " ₽";
+    if (s.done) {
+        text += "\nМесяц завершён";
+    }
+    stats->setText(text);
+    QString journal;
+    for (const std::string &line : s.log) {
+        journal += QString::fromStdString(line);
+        journal += '\n';
+    }
+    log_view->setPlainText(journal);
+    QScrollBar *bar = log_view->verticalScrollBar();
+    bar->setValue(bar->maximum());
 }

@@ -8,12 +8,14 @@ QMAKE_CXXFLAGS += -finput-charset=UTF-8 -fexec-charset=UTF-8
 
 SOURCES += \
     bank.cpp \
+    bankwidget.cpp \
     generators.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
     bank.h \
+    bankwidget.h \
     generators.h \
     mainwindow.h
 
